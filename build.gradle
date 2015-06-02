@@ -1,0 +1,109 @@
+buildscript {
+    ext {
+        springBootVersion = '1.0.1.RELEASE'
+    }
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+    }
+}
+
+plugins {
+  id "com.bmuschko.docker-java-application" version "2.4"
+}
+
+apply plugin: "groovy"
+apply plugin: "spring-boot"
+apply plugin: "application"
+
+sourceCompatibility = "1.6"
+targetCompatibility = "1.6"
+
+version = "${version}"
+group = "${group}"
+mainClassName = "sample.SampleApplication"
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile "org.codehaus.groovy:groovy"
+    compile "org.springframework.boot:spring-boot-starter-web"
+    compile "org.springframework.boot:spring-boot-starter-actuator"
+    testCompile "org.springframework.boot:spring-boot-starter-test"
+}
+
+docker {
+  url = 'https://192.168.59.103:2376'
+  certPath = new File(
+    System.properties['user.home'],
+    '.boot2docker/certs/boot2docker-vm'
+  )
+  registryCredentials {
+    username = project.dockerHubUser
+    password = project.dockerHubPassword
+    email = project.dockerHubEmail
+  }
+  javaApplication {
+    tag = "${project.docker.registryCredentials.username}/helloworld"
+  }
+}
+
+task remotePull(type: com.bmuschko.gradle.docker.tasks.image.DockerPullImage) {
+  repository = "${project.docker.registryCredentials.username}/${project.name}"
+  tag = 'latest'
+}
+
+task remoteStop(type: com.bmuschko.gradle.docker.tasks.container.DockerStopContainer) {
+  onlyIf {
+    file('.docker.prod.id').exists()
+  }
+  targetContainerId {
+    file('.docker.prod.id').text
+  }
+}
+
+task remoteRemove(type: com.bmuschko.gradle.docker.tasks.container.DockerRemoveContainer) {
+  mustRunAfter 'remoteStop'
+  onlyIf {
+    file('.docker.prod.id').exists()
+  }
+  targetContainerId {
+    file('.docker.prod.id').text
+  }
+  doLast {
+    delete file('.docker.prod.id')
+  }
+}
+
+task remoteCreate(type: com.bmuschko.gradle.docker.tasks.container.DockerCreateContainer) {
+  mustRunAfter 'remoteRemove'
+  dependsOn 'remotePull'
+  name = 'helloworld'
+  targetImageId {
+    "${project.docker.registryCredentials.username}/${project.name}:latest".toString()
+  }
+  doLast {
+    file('.docker.prod.id').text = containerId
+  }
+}
+
+task remoteStart(type: com.bmuschko.gradle.docker.tasks.container.DockerStartContainer) {
+  mustRunAfter 'remoteCreate'
+  portBindings = ['8080:8080']
+  targetContainerId {
+    remoteCreate.containerId
+  }
+}
+
+task deploy() {
+  dependsOn 'remotePull', 'remoteStop', 'remoteRemove', 'remoteCreate', 'remoteStart'
+}
+
+[remotePull, remoteStop, remoteRemove, remoteCreate, remoteStart].each { task ->
+  task.url = "https://52.24.127.40:2376"
+  task.certPath = new File(System.properties['user.home'], '.docker/machine/machines/prod')
+}
